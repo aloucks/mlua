@@ -1,13 +1,43 @@
-version: 2
+version: 2.1
 jobs:
   build:
-    docker:
-      - image: circleci/rust:latest
+    machine:
+      image: ubuntu-1604:201903-01
     steps:
       - checkout
       - run:
-          name: Version information
-          command: rustc --version; cargo --version; rustup --version
+          name: Install Rust
+          command: |
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+            echo "source $HOME/.cargo/env" >> $BASH_ENV
+      - run:
+          name: Check Formatting
+          command: |
+            rustfmt --version
+            cargo fmt --all -- --check --color=auto
+      - run:
+          name: Install latest Lua 5.3 and LuaJIT from sources
+          command: |
+            # Lua 5.3
+            curl -L https://www.lua.org/ftp/lua-5.3.5.tar.gz | tar xz
+            cd lua-5.3.5
+            make linux MYCFLAGS=-fPIC
+            sudo install -m 0644 -D -t /usr/local/include/lua5.3 src/lua.h src/luaconf.h src/lualib.h src/lauxlib.h
+            sudo install -m 0644 src/liblua.a /usr/local/lib/liblua5.3.a
+            cd ..
+            rm -rf lua-5.3.5
+            # LuaJIT
+            curl -L http://luajit.org/download/LuaJIT-2.1.0-beta3.tar.gz | tar xz
+            cd LuaJIT-2.1.0-beta3
+            make
+            sudo make install
+            cd ..
+            rm -rf LuaJIT-2.1.0-beta3
+      - run:
+          name: Install Lua 5.2/5.1 from packages
+          command: |
+            sudo apt-get update
+            sudo apt-get -y --no-install-recommends install liblua5.2-dev liblua5.1-0-dev
       - run:
           name: Calculate dependencies
           command: cargo generate-lockfile
@@ -15,22 +45,11 @@ jobs:
           keys:
             - cargo-cache-{{ arch }}-{{ checksum "Cargo.lock" }}
       - run:
-          name: Check Formatting
-          command: |
-            rustup component add rustfmt
-            rustfmt --version
-            cargo fmt --all -- --check --color=auto
-      - run:
-          name: Install Lua
-          command: |
-            sudo apt-get update
-            sudo apt-get -y --no-install-recommends install liblua5.3-dev liblua5.2-dev  liblua5.1-0-dev libluajit-5.1-dev
-      - run:
           name: Build all targets
           command: cargo build --all --all-targets
       - run:
           name: Run all tests / Lua 5.3
-          command: cargo test --all --no-default-features --features lua53
+          command: LUA_INC=/usr/local/include/lua5.3 LUA_LIB=/usr/local/lib LUA_LIB_NAME=lua5.3 cargo test --all --no-default-features --features lua53
       - run:
           name: Run all tests / Lua 5.2
           command: cargo test --all --no-default-features --features lua52
@@ -55,13 +74,13 @@ jobs:
             for file in target/debug/*; do
               if [[ -f $file && -x $file && ! $file =~ compile_fail ]]; then
                 mkdir -p "target/cov/$(basename $file)";
-                sudo $HOME/.local/bin/kcov --exclude-pattern=/usr/local/cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file";
+                kcov --exclude-pattern=~/.cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file";
               fi
             done
             kcov --coveralls-id=$COVERALLS_REPO_TOKEN --merge target/cov target/cov/*
       - save_cache:
           paths:
-            - /usr/local/cargo/registry
+            - /home/circleci/.cargo/registry
             - target/debug/.fingerprint
             - target/debug/build
             - target/debug/deps
