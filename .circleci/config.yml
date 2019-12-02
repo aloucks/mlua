@@ -17,14 +17,14 @@ jobs:
       - run:
           name: Check Formatting
           command: |
-              rustup component add rustfmt
-              rustfmt --version
-              cargo fmt --all -- --check --color=auto
+            rustup component add rustfmt
+            rustfmt --version
+            cargo fmt --all -- --check --color=auto
       - run:
           name: Install Lua
           command: |
-              sudo apt-get update
-              sudo apt-get -y --no-install-recommends install liblua5.3-dev liblua5.2-dev  liblua5.1-0-dev libluajit-5.1-dev
+            sudo apt-get update
+            sudo apt-get -y --no-install-recommends install liblua5.3-dev liblua5.2-dev  liblua5.1-0-dev libluajit-5.1-dev
       - run:
           name: Build all targets
           command: cargo build --all --all-targets
@@ -40,6 +40,25 @@ jobs:
       - run:
           name: Run all tests / LuaJIT
           command: cargo test --all --no-default-features --features luajit
+      - run:
+          name: Check coverage
+          command: |
+            export KCOV_VERSION=37
+            export LOCAL="~/.local"
+            sudo apt-get -y --no-install-recommends install cmake binutils-dev libcurl4-openssl-dev zlib1g-dev libdw-dev libiberty-dev
+            curl -L https://github.com/SimonKagstrom/kcov/archive/v${KCOV_VERSION}.tar.gz | tar xz
+            mkdir kcov-${KCOV_VERSION}/build
+            cd kcov-${KCOV_VERSION}/build
+            cmake -DCMAKE_INSTALL_PREFIX:PATH=$LOCAL .. && make && make install && cd ../..
+            cargo clean
+            RUSTFLAGS="-C link-dead-code" cargo test --no-run
+            for file in target/debug/*; do
+              if [[ -f $file && -x $file && ! $file =~ compile_fail ]]; then
+                mkdir -p "target/cov/$(basename $file)";
+                kcov --exclude-pattern=/usr/local/cargo,/usr/lib --verify "target/cov/$(basename $file)" "$file";
+              fi
+            done
+            kcov --coveralls-id=$COVERALLS_REPO_TOKEN --merge target/cov target/cov/*
       - save_cache:
           paths:
             - /usr/local/cargo/registry
